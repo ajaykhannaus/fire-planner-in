@@ -1,5 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {demo,calculate,requiredCorpus,simulate,convertPlan,countdown,validate,lean,fat,barista,coast,goalCost,goalPlan,blendedReturn,yearFlows,stressTest} from '../dist/engine.js';
+import {calculate,requiredCorpus,simulate,convertPlan,countdown,validate,lean,fat,barista,coast,goalCost,goalPlan,blendedReturn,yearFlows,stressTest} from '../dist/engine.js';
+// Fixed fixture so the site's sample plan can change without changing what the tests check.
+const demo = {name:'My freedom plan',age:32,retire:50,horizon:95,expenses:75000,leanExpenses:45000,fatExpenses:120000,baristaIncome:30000,baristaUntil:60,income:180000,assets:4500000,contribution:70000,inflation:5,preReturn:8,postReturn:6,stepUp:3,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,goals:[],incomes:[]};
 test('zero return, zero inflation retirement matches undiscounted cash flows',()=>{const p={...demo,age:40,retire:40,horizon:60,expenses:1000,assets:240000,inflation:0,postReturn:0,goals:[]};assert.equal(requiredCorpus(p),240000);assert.equal(simulate(p).firstShortfall,null);assert.equal(simulate({...p,assets:239999}).firstShortfall,59);});
 test('solver funds retirement including an early goal',()=>{const p={...demo,goals:[{name:'Home',amount:2000000,age:35}]};const result=calculate(p);assert.equal(simulate(p,p.retire,result.requiredMonthly+1).firstShortfall,null);assert.notEqual(simulate(p,p.retire,Math.max(0,result.requiredMonthly-10)).firstShortfall,null);});
 test('pension reduces requirement; additional goals increase it',()=>{assert.ok(requiredCorpus({...demo,pension:20000})<requiredCorpus(demo));assert.ok(requiredCorpus({...demo,goals:[{name:'Travel',amount:100000,age:60}]})>requiredCorpus(demo));});

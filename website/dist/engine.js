@@ -1,4 +1,4 @@
-export const demo = {name:'My freedom plan',age:32,retire:50,horizon:95,expenses:75000,leanExpenses:45000,fatExpenses:120000,baristaIncome:30000,baristaUntil:60,income:180000,assets:4500000,contribution:70000,inflation:5,preReturn:8,postReturn:6,stepUp:3,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,goals:[],incomes:[]};
+export const demo = {name:'My freedom plan',age:28,retire:45,horizon:90,expenses:50000,leanExpenses:30000,fatExpenses:75000,baristaIncome:20000,baristaUntil:55,income:100000,assets:800000,contribution:30000,inflation:6,preReturn:12,postReturn:8,stepUp:5,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,goals:[{name:'Home down payment',amount:2000000,age:33}],incomes:[]};
 export const assetClasses=['Equity','Debt','Cash','Gold','Property','Other'],regions=['India','US','Europe','Other'];
 // Size-weighted return across holdings, or null without any invested amount.
 export function blendedReturn(p){const t=(p.holdings||[]).reduce((s,h)=>s+h.amount,0);return t>0?p.holdings.reduce((s,h)=>s+h.amount*h.ret,0)/t:null;}
