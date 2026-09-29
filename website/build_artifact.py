@@ -24,16 +24,16 @@ head = re.search(r'<head>(.*?)</head>', html, re.S).group(1)
 body = re.search(r'<body>(.*?)</body>', html, re.S).group(1)
 
 head = re.sub(r'<meta charset="utf-8">|<meta name="viewport"[^>]*>', '', head)
-head = re.sub(r'<link rel="stylesheet" href="style.css">', '', head)
+head = re.sub(r'<link rel="stylesheet" href="style.css(?:\?v=\w+)?">', '', head)
 title = re.search(r'<title>.*?</title>', head).group(0)
 head = head.replace(title, '')
 
-body = re.sub(r'<script type="module" src="app.js"></script>', '', body)
+body = re.sub(r'<script type="module" src="app.js(?:\?v=\w+)?"></script>', '', body)
 body = body.replace('<button id="print" ', '<button id="print" hidden ')
 body = body.replace('<button id="fetch-rate" ', '<button id="fetch-rate" hidden ')
 assert 'id="print" hidden' in body and 'id="fetch-rate" hidden' in body
 
-imports = re.search(r"^import \{([^}]*)\} from './engine.js';\n", app, re.M)
+imports = re.search(r"^import \{([^}]*)\} from './engine.js(?:\?v=\w+)?';\n", app, re.M)
 names = imports.group(1)
 app = app.replace(imports.group(0), '')
 engine = re.sub(r'^export (function|const) ', r'\1 ', engine, flags=re.M)

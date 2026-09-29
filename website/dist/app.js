@@ -1,4 +1,4 @@
-import {demo,calculate,validate,convertPlan,countdown,lean,fat,barista,coast,goalCost,goalPlan,requiredCorpus,assetClasses,regions,blendedReturn,yearFlows,stressTest,simulate} from './engine.js';
+import {demo,calculate,validate,convertPlan,countdown,lean,fat,barista,coast,goalCost,goalPlan,requiredCorpus,assetClasses,regions,blendedReturn,yearFlows,stressTest,simulate} from './engine.js?v=dev';
 const $=id=>document.getElementById(id),KEY='fire-planner-v1',currencies=['INR','USD','EUR','GBP','AED','CAD','AUD','SGD','JPY'];
 const date=new Date();date.setFullYear(date.getFullYear()+demo.retire-demo.age);const defaultDate=`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const initial=()=>({plan:structuredClone(demo),currency:'INR',snapshots:[],targetDate:defaultDate,theme:'sunrise',personal:false});let state=initial(),persistent=false,basis='nominal',formValid=true,timer;
@@ -155,6 +155,15 @@ const themePref=()=>document.documentElement.dataset.theme||'system',isDark=()=>
 function applyTheme(pref){if(pref==='system')delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=pref;try{pref==='system'?localStorage.removeItem(THEME_KEY):localStorage.setItem(THEME_KEY,pref);}catch{}themeUI();}
 function themeUI(){const d=isDark();$('theme-toggle').innerHTML=`<span aria-hidden="true">${d?'☀':'☾'}</span>${d?'Light':'Dark'}`;$('theme-toggle').setAttribute('aria-label',d?'Switch to light mode':'Switch to dark mode');$('theme-select').value=themePref();document.querySelector('meta[name=theme-color]').content=d?'#151412':'#fbf9f6';}
 $('theme-toggle').onclick=()=>applyTheme(isDark()?'light':'dark');$('theme-select').onchange=()=>applyTheme($('theme-select').value);darkQuery.addEventListener?.('change',themeUI);themeUI();
+// Deploys stamp APP_VERSION and write version.json. When a newer version is live, reload straight away
+// if nothing unsaved could be lost (sample plan, or a plan saved in this browser); otherwise offer a Reload button.
+const APP_VERSION='dev';
+async function checkForUpdate(){if(APP_VERSION==='dev')return;try{const r=await fetch(`version.json?t=${Date.now()}`,{cache:'no-store'});if(!r.ok)return;const {version}=await r.json();if(!version||version===APP_VERSION)return;
+let tried=false;try{tried=sessionStorage.getItem('fire-planner-reloaded')===version;}catch{}
+if((!state.personal||persistent)&&!tried){try{sessionStorage.setItem('fire-planner-reloaded',version);}catch{}location.reload();return;}
+$('update-bar').hidden=false;}catch{}}
+$('update-reload').onclick=()=>state.personal&&!persistent?confirmAction('Reload for the new version?','Your plan isn’t saved, so reloading resets it to the sample. Press Save first to keep it.',()=>location.reload()):location.reload();
+checkForUpdate();document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkForUpdate();});
 $('save-btn').onclick=()=>{if(persistent){persist();return toast('All changes are saved on this browser. Download a copy in Settings to use it elsewhere.');}persistent=true;$('persist').checked=true;persist();if(persistent)toast('Saved on this browser. Changes now save automatically.');};
 const planData=()=>JSON.stringify({app:'fire-planner',version:1,savedAt:new Date().toISOString(),...state},null,2);
 $('export').onclick=()=>{const data=planData();const fallback=()=>{$('paste-box').open=true;$('paste-data').value=data;$('paste-data').select();toast('Your plan data is selected below. Copy it into a private note or file to keep a backup.');};try{navigator.clipboard.writeText(data).then(()=>toast('Plan data copied. Paste it into a private note or file to keep a backup.'),fallback);}catch{fallback();}};
