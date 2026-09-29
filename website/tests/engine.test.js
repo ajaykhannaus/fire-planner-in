@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {calculate,requiredCorpus,simulate,convertPlan,countdown,validate,lean,fat,barista,coast,goalCost,goalPlan,blendedReturn,yearFlows,stressTest} from '../dist/engine.js';
+import {calculate,requiredCorpus,simulate,convertPlan,countdown,validate,lean,fat,barista,coast,goalCost,goalPlan,blendedReturn,yearFlows,stressTest,legacyAt,readiness} from '../dist/engine.js';
 // Fixed fixture so the site's sample plan can change without changing what the tests check.
 const demo = {name:'My freedom plan',age:32,retire:50,horizon:95,expenses:75000,leanExpenses:45000,fatExpenses:120000,baristaIncome:30000,baristaUntil:60,income:180000,assets:4500000,contribution:70000,inflation:5,preReturn:8,postReturn:6,stepUp:3,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,goals:[],incomes:[]};
 test('zero return, zero inflation retirement matches undiscounted cash flows',()=>{const p={...demo,age:40,retire:40,horizon:60,expenses:1000,assets:240000,inflation:0,postReturn:0,goals:[]};assert.equal(requiredCorpus(p),240000);assert.equal(simulate(p).firstShortfall,null);assert.equal(simulate({...p,assets:239999}).firstShortfall,59);});
@@ -49,3 +49,12 @@ assert.equal(requiredCorpus(q),18000*5+12000*5+8400*5+6000*5);
 const h={...p,inflation:5,spendingChanges:[{name:'Health',kind:'amount',monthly:100,start:50,inflation:12}]};validate(h);assert.ok(Math.abs(yearFlows(h,50).spend-(1000*12*1.05**10+100*12*1.12**10))<1e-6);
 assert.throws(()=>validate({...p,spendingChanges:[{name:'x',kind:'percent',percent:-95,start:45}]}));assert.throws(()=>validate({...p,spendingChanges:[{name:'x',kind:'amount',monthly:100,start:45,end:45}]}));
 assert.equal(convertPlan({...q},2).spendingChanges[0].monthly,1000);assert.equal(convertPlan({...q},2).spendingChanges[2].percent,-20);});
+
+test('legacy target raises the requirement by its value discounted from the horizon',()=>{const p={...structuredClone(demo),age:40,retire:40,horizon:60,expenses:1000,leanExpenses:600,fatExpenses:1500,baristaUntil:40,assets:0,inflation:0,postReturn:0,goals:[],pension:0};validate(p);
+const base=requiredCorpus(p),withL=requiredCorpus({...p,legacy:50000});assert.equal(withL-base,50000);
+const q={...p,assets:base+10};assert.equal(simulate(q).funded,true);assert.equal(simulate({...q,legacy:50000}).funded,false);assert.equal(simulate({...q,legacy:50000}).firstShortfall,null);
+assert.ok(calculate({...structuredClone(demo),legacy:1e7}).target>calculate(structuredClone(demo)).target);assert.throws(()=>validate({...demo,legacy:-1}));assert.ok(Math.abs(legacyAt({...demo,legacy:100})-100*(1+demo.inflation/100)**(demo.horizon-demo.age))<1e-9);});
+test('readiness checklist statuses follow answers and the plan',()=>{const p=structuredClone(demo);let r=readiness(p);assert.equal(r.length,9);assert.equal(r.find(x=>x.id==='emergency').status,'unknown');
+r=readiness({...p,readiness:{emergencyMonths:8,highInterestDebt:true,healthCover:false,willAndNominees:true}});
+assert.equal(r.find(x=>x.id==='emergency').status,'done');assert.equal(r.find(x=>x.id==='highInterestDebt').status,'todo');assert.equal(r.find(x=>x.id==='healthCover').status,'todo');assert.equal(r.find(x=>x.id==='willAndNominees').status,'done');
+assert.equal(r.find(x=>x.id==='funded').status,calculate(p).forecast<=p.retire?'done':'todo');assert.throws(()=>validate({...demo,readiness:{healthCover:'yes'}}));});

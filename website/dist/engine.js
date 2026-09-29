@@ -1,4 +1,4 @@
-export const demo = {name:'My freedom plan',age:28,retire:45,horizon:90,expenses:50000,leanExpenses:30000,fatExpenses:75000,baristaIncome:20000,baristaUntil:55,income:100000,assets:800000,contribution:30000,inflation:6,preReturn:12,postReturn:8,stepUp:5,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,goals:[{name:'Home down payment',amount:2000000,age:33}],incomes:[]};
+export const demo = {name:'My freedom plan',age:28,retire:45,horizon:90,expenses:50000,leanExpenses:30000,fatExpenses:75000,baristaIncome:20000,baristaUntil:55,income:100000,assets:800000,contribution:30000,inflation:6,preReturn:12,postReturn:8,stepUp:5,pension:0,pensionAge:60,withdrawalTax:0,volatility:12,legacy:0,goals:[{name:'Home down payment',amount:2000000,age:33}],incomes:[]};
 export const assetClasses=['Equity','Debt','Cash','Gold','Property','Other'],regions=['India','US','Europe','Other'];
 // Size-weighted return across holdings, or null without any invested amount.
 export function blendedReturn(p){const t=(p.holdings||[]).reduce((s,h)=>s+h.amount,0);return t>0?p.holdings.reduce((s,h)=>s+h.amount*h.ret,0)/t:null;}
@@ -36,6 +36,9 @@ export function validate(p) {
   if(!Array.isArray(p.incomes)||p.incomes.length>20) throw Error('A plan can contain up to 20 income streams.');
   for(const s of p.incomes) if(typeof s.name!=='string'||!Number.isFinite(s.monthly)||s.monthly<=0||s.monthly>1e9||!Number.isInteger(s.start)||!Number.isInteger(s.end)||s.start<18||s.end>111||s.end<=s.start||typeof s.inflate!=='boolean') throw Error('Check each income stream’s amount and ages.');
   if(p.lifeEvents===undefined) p.lifeEvents=[];
+  if(p.legacy===undefined) p.legacy=0;
+  if(!Number.isFinite(p.legacy)||p.legacy<0||p.legacy>1e12) throw Error('Enter a legacy amount of zero or more.');
+  if(p.readiness!==undefined) validateReadiness(p.readiness);
   if(p.spendingChanges===undefined) p.spendingChanges=[];
   validateSpendingChanges(p);
   validateLifeEvents(p);
@@ -51,6 +54,13 @@ export function validateSpendingChanges(p) {
     if(c.kind==='amount'&&(!Number.isFinite(c.monthly)||c.monthly===0||Math.abs(c.monthly)>1e9||(c.inflation!==undefined&&(!Number.isFinite(c.inflation)||c.inflation<0||c.inflation>30)))) throw Error('Enter a monthly amount and an inflation rate between 0% and 30%.');
     if(c.kind==='percent'&&(!Number.isFinite(c.percent)||c.percent===0||c.percent<-90||c.percent>200)) throw Error('Enter a percentage change between −90% and +200%.');
   }
+}
+// Readiness checklist answers (free). Each answer is optional; months is a number, the rest yes/no.
+const READINESS_ANSWERS=['highInterestDebt','bridgeCovered','healthCover','upcomingCosts','willAndNominees'];
+function validateReadiness(r){
+  if(!r||typeof r!=='object'||Array.isArray(r)) throw Error('Check your readiness answers.');
+  if(r.emergencyMonths!==undefined&&(!Number.isFinite(r.emergencyMonths)||r.emergencyMonths<0||r.emergencyMonths>120)) throw Error('Emergency reserve must be 0 to 120 months.');
+  for(const k of READINESS_ANSWERS) if(r[k]!==undefined&&typeof r[k]!=='boolean') throw Error('Check your readiness answers.');
 }
 const changeActive=(c,a)=>a>=c.start&&(c.end===undefined||a<c.end);
 // Pro life events use the same annual cash-flow convention as the free planner.
@@ -78,7 +88,7 @@ export function previewLifeEvent(p,event) {
   return {plan:next,before:calculate(structuredClone(p)),after:calculate(next)};
 }
 export function planChanges(before,after) {
-  const labels={age:'Current age',retire:'Target retirement age',horizon:'Planning horizon',assets:'Investments',income:'Monthly income',expenses:'Monthly spending',contribution:'Monthly investing',inflation:'Inflation',preReturn:'Return before retirement',postReturn:'Return after retirement',stepUp:'Contribution increase',pension:'Pension',pensionAge:'Pension start age',withdrawalTax:'Withdrawal tax',volatility:'Volatility',leanExpenses:'Lean spending',fatExpenses:'Fat spending',baristaIncome:'Part-time income',baristaUntil:'Part-time end age',name:'Plan name'};
+  const labels={age:'Current age',retire:'Target retirement age',horizon:'Planning horizon',assets:'Investments',income:'Monthly income',expenses:'Monthly spending',contribution:'Monthly investing',inflation:'Inflation',preReturn:'Return before retirement',postReturn:'Return after retirement',stepUp:'Contribution increase',pension:'Pension',pensionAge:'Pension start age',withdrawalTax:'Withdrawal tax',volatility:'Volatility',leanExpenses:'Lean spending',fatExpenses:'Fat spending',baristaIncome:'Part-time income',baristaUntil:'Part-time end age',legacy:'Legacy target',name:'Plan name'};
   const changes=[];
   for(const [key,label]of Object.entries(labels)) if(before[key]!==after[key])changes.push({key,label,before:before[key],after:after[key]});
   for(const [key,label]of [['goals','Goals'],['incomes','Income streams'],['holdings','Holdings'],['lifeEvents','Life events'],['spendingChanges','Spending changes']])if(JSON.stringify(before[key]||[])!==JSON.stringify(after[key]||[]))changes.push({key,label,before:(before[key]||[]).length,after:(after[key]||[]).length,collection:true});
@@ -121,9 +131,11 @@ export function goalPlan(p,g) {
 }
 // Annual beginning-of-year cash flows; effective annual nominal returns.
 // Expenses and income are entered in today's money.
+// Legacy target: an amount in today's money to leave at the end of the plan, grown with inflation.
+export const legacyAt=p=>(p.legacy||0)*(1+p.inflation/100)**(p.horizon-p.age);
 export function requiredCorpus(p, retirement=p.retire) {
   const r=1+p.postReturn/100;
-  let need=0;
+  let need=legacyAt(p);
   for(let a=p.horizon-1;a>=retirement;a--) {
     // Money arriving later cannot cover earlier years, so the requirement never goes negative.
     need=Math.max(0,need/r+drawAt(p,a)+goalsAt(p,a));
@@ -152,20 +164,21 @@ export function simulate(p, retirement=p.retire, contribution=p.contribution, st
     if(a+1===retirement) retirementAssets=balance;
     points.push({age:a+1,balance});
   }
-  return {points,firstShortfall,retirementAssets,final:balance};
+  // Funded: money never runs out and at least the legacy target remains at the end.
+  return {points,firstShortfall,retirementAssets,final:balance,funded:firstShortfall===null&&balance>=legacyAt(p)-0.01};
 }
 export function calculate(p) {
   validate(p);
   const target=requiredCorpus(p), todayTarget=target/(1+p.inflation/100)**(p.retire-p.age);
   const projection=simulate(p);
   let forecast=null;
-  for(let a=p.age;a<p.horizon;a++) if(simulate(p,a).firstShortfall===null) {forecast=a;break;}
+  for(let a=p.age;a<p.horizon;a++) if(simulate(p,a).funded) {forecast=a;break;}
   let lo=0,hi=Math.max(1,p.contribution);
   if(p.retire>p.age) {
-    while(simulate(p,p.retire,hi).firstShortfall!==null&&hi<1e10) hi*=2;
-    for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(simulate(p,p.retire,mid).firstShortfall===null) hi=mid;else lo=mid;}
+    while(!simulate(p,p.retire,hi).funded&&hi<1e10) hi*=2;
+    for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(simulate(p,p.retire,mid).funded) hi=mid;else lo=mid;}
   }
-  return {target,todayTarget,projection,forecast,requiredMonthly:p.retire===p.age||simulate(p,p.retire,hi).firstShortfall!==null?null:hi,progress:todayTarget>0?p.assets/todayTarget*100:100,gap:Math.max(0,target-projection.retirementAssets),surplus:p.income-p.expenses,savingsRate:p.income>0?(p.income-p.expenses)/p.income*100:null};
+  return {target,todayTarget,projection,forecast,requiredMonthly:p.retire===p.age||!simulate(p,p.retire,hi).funded?null:hi,progress:todayTarget>0?p.assets/todayTarget*100:100,gap:Math.max(0,target-projection.retirementAssets),surplus:p.income-p.expenses,savingsRate:p.income>0?(p.income-p.expenses)/p.income*100:null};
 }
 function scenario(p,changes){
   const r=calculate({...p,...changes});
@@ -181,12 +194,12 @@ export function barista(p) {validate(p);return {...scenario(p,{baristaActive:tru
 export function coast(p) {
   validate(p);
   if(p.retire===p.age) return null;
-  const funded=assets=>simulate({...p,assets},p.retire,0).firstShortfall===null;
+  const funded=assets=>simulate({...p,assets},p.retire,0).funded;
   let lo=0,hi=Math.max(1,p.assets);
   while(!funded(hi)&&hi<1e15) hi*=2;
   for(let i=0;i<60;i++){const mid=(lo+hi)/2;if(funded(mid)) hi=mid;else lo=mid;}
   let age=null,balance=null;
-  for(let c=p.age;c<=p.retire;c++){const s=simulate(p,p.retire,p.contribution,c);if(s.firstShortfall===null){age=c;balance=s.points[c-p.age].balance;break;}}
+  for(let c=p.age;c<=p.retire;c++){const s=simulate(p,p.retire,p.contribution,c);if(s.funded){age=c;balance=s.points[c-p.age].balance;break;}}
   return {todayNumber:hi,reached:funded(p.assets),progress:Math.min(100,p.assets/hi*100),age,balance};
 }
 // ---- Stress testing ----
@@ -198,7 +211,7 @@ const pathRates=(p,z)=>Array.from(z,(v,i)=>Math.max(-90,(p.age+i<p.retire?p.preR
 const pct=(sorted,q)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.round(q*(sorted.length-1))))];
 export function stressTest(p,{paths=1000,seed=1,confidence=0.9}={}) {
   validate(p);
-  const n=p.horizon-p.age,z=normals(n,paths,seed),successRate=q=>z.reduce((s,row)=>s+(simulate(q,q.retire,q.contribution,q.retire,pathRates(q,row)).firstShortfall===null),0)/paths;
+  const n=p.horizon-p.age,z=normals(n,paths,seed),successRate=q=>z.reduce((s,row)=>s+(simulate(q,q.retire,q.contribution,q.retire,pathRates(q,row)).funded),0)/paths;
   const runs=z.map(row=>simulate(p,p.retire,p.contribution,p.retire,pathRates(p,row)));
   const bands=[];for(let i=0;i<=n;i++){const col=runs.map(r=>r.points[i].balance).sort((a,b)=>a-b);bands.push({age:p.age+i,p10:pct(col,.1),p25:pct(col,.25),p50:pct(col,.5),p75:pct(col,.75),p90:pct(col,.9)});}
   const fails=runs.map(r=>r.firstShortfall).filter(a=>a!==null).sort((a,b)=>a-b);
@@ -208,10 +221,10 @@ export function stressTest(p,{paths=1000,seed=1,confidence=0.9}={}) {
   // Sequence risk: the same 25% fall in the first year of retirement versus fifteen years later.
   const crash=at=>{const rates=Array.from({length:n},(_,i)=>p.age+i<p.retire?p.preReturn:p.postReturn);if(at-p.age<n)rates[at-p.age]=-25;return simulate(p,p.retire,p.contribution,p.retire,rates);};
   const base=simulate(p),early=crash(p.retire),late=crash(Math.min(p.horizon-1,p.retire+15));
-  return {paths,successRate:(paths-fails.length)/paths,bands,failAges:fails,medianFailAge:fails.length?pct(fails,.5):null,earliestFail10:fails.length>=paths*.1?pct(runs.map(r=>r.firstShortfall??Infinity).sort((a,b)=>a-b),.1):null,safeExpenses:lo,confidence,
+  return {paths,successRate:runs.filter(r=>r.funded).length/paths,bands,failAges:fails,medianFailAge:fails.length?pct(fails,.5):null,earliestFail10:fails.length>=paths*.1?pct(runs.map(r=>r.firstShortfall??Infinity).sort((a,b)=>a-b),.1):null,safeExpenses:lo,confidence,
     sequence:{base:{shortfall:base.firstShortfall,final:base.final},early:{age:p.retire,shortfall:early.firstShortfall,final:early.final},late:{age:Math.min(p.horizon-1,p.retire+15),shortfall:late.firstShortfall,final:late.final}}};
 }
-export function convertPlan(p,rate){if(!Number.isFinite(rate)||rate<=0)throw Error('Invalid exchange rate.');const next=structuredClone(p);for(const k of ['expenses','leanExpenses','fatExpenses','baristaIncome','income','assets','contribution','pension'])if(next[k]!==undefined)next[k]*=rate;next.goals=next.goals.map(g=>({...g,amount:g.amount*rate,...(g.fund?{fund:{...g.fund,saved:g.fund.saved*rate,monthly:g.fund.monthly*rate}}:{})}));next.incomes=(next.incomes||[]).map(s=>({...s,monthly:s.monthly*rate}));next.holdings=(next.holdings||[]).map(h=>({...h,amount:h.amount*rate}));next.spendingChanges=(next.spendingChanges||[]).map(c=>c.kind==='amount'?{...c,monthly:c.monthly*rate}:{...c});next.lifeEvents=(next.lifeEvents||[]).map(e=>e.type==='purchase'?{...e,amount:e.amount*rate}:{...e,draw:e.draw*rate});return next;}
+export function convertPlan(p,rate){if(!Number.isFinite(rate)||rate<=0)throw Error('Invalid exchange rate.');const next=structuredClone(p);for(const k of ['expenses','leanExpenses','fatExpenses','baristaIncome','income','assets','contribution','pension'])if(next[k]!==undefined)next[k]*=rate;next.goals=next.goals.map(g=>({...g,amount:g.amount*rate,...(g.fund?{fund:{...g.fund,saved:g.fund.saved*rate,monthly:g.fund.monthly*rate}}:{})}));next.incomes=(next.incomes||[]).map(s=>({...s,monthly:s.monthly*rate}));next.holdings=(next.holdings||[]).map(h=>({...h,amount:h.amount*rate}));if(next.legacy)next.legacy*=rate;next.spendingChanges=(next.spendingChanges||[]).map(c=>c.kind==='amount'?{...c,monthly:c.monthly*rate}:{...c});next.lifeEvents=(next.lifeEvents||[]).map(e=>e.type==='purchase'?{...e,amount:e.amount*rate}:{...e,draw:e.draw*rate});return next;}
 export function countdown(target,now=new Date()){
   const end=new Date(target+'T00:00:00');if(!Number.isFinite(end.getTime()))return null;
   if(end<=now)return {years:0,months:0,days:0,past:true};
@@ -220,4 +233,25 @@ export function countdown(target,now=new Date()){
   const advance=n=>new Date(start.getFullYear(),start.getMonth()+n,Math.min(start.getDate(),new Date(start.getFullYear(),start.getMonth()+n+1,0).getDate()));
   if(advance(months)>end)months--;
   return {years:Math.floor(months/12),months:months%12,days:Math.round((end-advance(months))/86400000),past:false};
+}
+
+// Retirement readiness checklist (free). Status: 'done', 'todo' or 'unknown' (not answered). Values let each
+// screen explain the item in its own words; the app's Swift engine returns the same list.
+export function readiness(p) {
+  validate(p);
+  const r=calculate(p),a=p.readiness||{},q=k=>a[k]===undefined?'unknown':a[k]?'done':'todo';
+  const firstDraw=yearFlows(p,p.retire).spend/(1-p.withdrawalTax/100),rate=r.target>0?firstDraw/r.target*100:null;
+  const success=stressTest(p,{paths:200,seed:1}).successRate;
+  const near=p.goals.filter(g=>g.kind!=='in'&&g.age>=p.retire-5&&g.age<=p.retire+5).length;
+  return [
+    {id:'funded',status:r.forecast!==null&&r.forecast<=p.retire?'done':'todo',value:r.forecast},
+    {id:'withdrawal',status:rate===null?'unknown':rate<=4?'done':'todo',value:rate},
+    {id:'stress',status:success>=0.8?'done':'todo',value:success},
+    {id:'emergency',status:a.emergencyMonths===undefined?'unknown':a.emergencyMonths>=6?'done':'todo',value:a.emergencyMonths??null},
+    {id:'highInterestDebt',status:a.highInterestDebt===undefined?'unknown':a.highInterestDebt?'todo':'done',value:null},
+    {id:'bridgeCovered',status:q('bridgeCovered'),value:null},
+    {id:'healthCover',status:q('healthCover'),value:null},
+    {id:'upcomingCosts',status:q('upcomingCosts'),value:near},
+    {id:'willAndNominees',status:q('willAndNominees'),value:null},
+  ];
 }
