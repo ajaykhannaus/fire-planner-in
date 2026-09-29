@@ -8,6 +8,7 @@ skeleton, and blocks printing and outside requests, so this script:
 
 Usage: python3 build_artifact.py   ->  artifact/fire-planner.html
 """
+import base64
 import pathlib
 import re
 
@@ -29,6 +30,11 @@ title = re.search(r'<title>.*?</title>', head).group(0)
 head = head.replace(title, '')
 
 body = re.sub(r'<script type="module" src="app.js(?:\?v=\w+)?"></script>', '', body)
+# The viewer serves only this page, so the logo goes inline as a data URI and the touch icon is dropped.
+logo = 'data:image/svg+xml;base64,' + base64.b64encode((dist / 'logo.svg').read_bytes()).decode()
+head = re.sub(r'logo\.svg(?:\?v=\w+)?', logo, head)
+body = re.sub(r'logo\.svg(?:\?v=\w+)?', logo, body)
+head = re.sub(r'<link rel="apple-touch-icon"[^>]*>', '', head)
 body = body.replace('<button id="print" ', '<button id="print" hidden ')
 body = body.replace('<button id="fetch-rate" ', '<button id="fetch-rate" hidden ')
 assert 'id="print" hidden' in body and 'id="fetch-rate" hidden' in body
