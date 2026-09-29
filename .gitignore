@@ -3,3 +3,11 @@ node_modules/
 .claude/
 website/artifact/
 website/.openai/
+
+ios/.build/
+ios/DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# The iOS app is its own private repository (ajaykhannaus/fire-planner-ios), checked out here.
+ios/
