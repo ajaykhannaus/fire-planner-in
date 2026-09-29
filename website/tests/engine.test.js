@@ -40,3 +40,12 @@ test('stress test: zero volatility matches the steady projection',()=>{const p={
 test('stress test is repeatable, and more volatility lowers success for a tight plan',()=>{const p={...structuredClone(demo),contribution:110000},a=stressTest(p,{paths:300,seed:7}),b=stressTest(p,{paths:300,seed:7});assert.equal(a.successRate,b.successRate);const calm=stressTest({...p,volatility:4},{paths:300,seed:7}),wild=stressTest({...p,volatility:25},{paths:300,seed:7});assert.ok(wild.successRate<calm.successRate);for(const x of a.bands)assert.ok(x.p10<=x.p50&&x.p50<=x.p90);});
 test('safe spending reaches the confidence target',()=>{const p={...structuredClone(demo),contribution:110000},s=stressTest(p,{paths:200,seed:3,confidence:.9}),ok=stressTest({...p,expenses:s.safeExpenses*0.999,leanExpenses:Math.min(p.leanExpenses,s.safeExpenses*0.999)},{paths:200,seed:3});assert.ok(ok.successRate>=.9);});
 test('a crash right after retiring hurts more than the same crash later',()=>{const p={...structuredClone(demo),contribution:110000},q=stressTest(p,{paths:10}).sequence;assert.ok(q.early.shortfall!==null&&q.early.shortfall<(q.late.shortfall??Infinity));});
+
+test('spending changes: amounts, own inflation, percentages and ages',()=>{const p={...structuredClone(demo),age:40,retire:40,horizon:60,expenses:1000,leanExpenses:600,fatExpenses:1500,baristaUntil:40,assets:0,inflation:0,postReturn:0,goals:[],pension:0};validate(p);
+const flat=yearFlows(p,45).spend;assert.equal(flat,12000);
+const q={...p,spendingChanges:[{name:'Loan',kind:'amount',monthly:500,start:40,end:45,inflation:0},{name:'Kids leave',kind:'amount',monthly:-300,start:50},{name:'Slower',kind:'percent',percent:-20,start:55}]};validate(q);
+assert.equal(yearFlows(q,44).spend,18000);assert.equal(yearFlows(q,45).spend,12000);assert.equal(yearFlows(q,50).spend,8400);assert.equal(yearFlows(q,55).spend,6000);
+assert.equal(requiredCorpus(q),18000*5+12000*5+8400*5+6000*5);
+const h={...p,inflation:5,spendingChanges:[{name:'Health',kind:'amount',monthly:100,start:50,inflation:12}]};validate(h);assert.ok(Math.abs(yearFlows(h,50).spend-(1000*12*1.05**10+100*12*1.12**10))<1e-6);
+assert.throws(()=>validate({...p,spendingChanges:[{name:'x',kind:'percent',percent:-95,start:45}]}));assert.throws(()=>validate({...p,spendingChanges:[{name:'x',kind:'amount',monthly:100,start:45,end:45}]}));
+assert.equal(convertPlan({...q},2).spendingChanges[0].monthly,1000);assert.equal(convertPlan({...q},2).spendingChanges[2].percent,-20);});

@@ -35,7 +35,54 @@ export function validate(p) {
   if(p.incomes===undefined) p.incomes=[];
   if(!Array.isArray(p.incomes)||p.incomes.length>20) throw Error('A plan can contain up to 20 income streams.');
   for(const s of p.incomes) if(typeof s.name!=='string'||!Number.isFinite(s.monthly)||s.monthly<=0||s.monthly>1e9||!Number.isInteger(s.start)||!Number.isInteger(s.end)||s.start<18||s.end>111||s.end<=s.start||typeof s.inflate!=='boolean') throw Error('Check each income stream’s amount and ages.');
+  if(p.lifeEvents===undefined) p.lifeEvents=[];
+  if(p.spendingChanges===undefined) p.spendingChanges=[];
+  validateSpendingChanges(p);
+  validateLifeEvents(p);
   return p;
+}
+// Spending by life stage (Pro): retirement spending that changes with age. An amount change adds or removes
+// monthly spending (today's money, growing at its own inflation rate, the plan's unless set); a percent change
+// scales base spending. Each applies from `start` until `end` (exclusive), or to the end of the plan.
+export function validateSpendingChanges(p) {
+  if(!Array.isArray(p.spendingChanges)||p.spendingChanges.length>20) throw Error('Use up to 20 spending changes.');
+  for(const c of p.spendingChanges) {
+    if(!c||typeof c.name!=='string'||!c.name.trim()||c.name.length>80||!['amount','percent'].includes(c.kind)||!Number.isInteger(c.start)||c.start<p.age||c.start>=p.horizon||(c.end!==undefined&&(!Number.isInteger(c.end)||c.end<=c.start||c.end>p.horizon))) throw Error('Check the spending change’s name and ages.');
+    if(c.kind==='amount'&&(!Number.isFinite(c.monthly)||c.monthly===0||Math.abs(c.monthly)>1e9||(c.inflation!==undefined&&(!Number.isFinite(c.inflation)||c.inflation<0||c.inflation>30)))) throw Error('Enter a monthly amount and an inflation rate between 0% and 30%.');
+    if(c.kind==='percent'&&(!Number.isFinite(c.percent)||c.percent===0||c.percent<-90||c.percent>200)) throw Error('Enter a percentage change between −90% and +200%.');
+  }
+}
+const changeActive=(c,a)=>a>=c.start&&(c.end===undefined||a<c.end);
+// Pro life events use the same annual cash-flow convention as the free planner.
+export function validateLifeEvents(p) {
+  if(!Array.isArray(p.lifeEvents)||p.lifeEvents.length>30) throw Error('Use up to 30 life events.');
+  const work=[];
+  for(const e of p.lifeEvents) {
+    if(!e||typeof e.name!=='string'||!e.name.trim()||e.name.length>80||!['purchase','work'].includes(e.type)||!Number.isInteger(e.start)||e.start<p.age||e.start>=p.horizon) throw Error('Check the event name and starting age.');
+    if(e.type==='purchase') {if(!Number.isFinite(e.amount)||e.amount<=0||e.amount>1e12) throw Error('Enter a positive purchase amount.');}
+    else {
+      if(!Number.isInteger(e.end)||e.end<=e.start||e.end>p.horizon||!Number.isFinite(e.percent)||e.percent<0||e.percent>100||!Number.isFinite(e.draw)||e.draw<0||e.draw>1e9) throw Error('Check the work period, contribution percentage and living-cost withdrawal.');
+      if(work.some(w=>e.start<w.end&&e.end>w.start)) throw Error('Work periods cannot overlap. Edit or remove the existing period first.');
+      work.push(e);
+    }
+  }
+}
+const lifePurchaseAt=(p,a)=>(p.lifeEvents||[]).filter(e=>e.type==='purchase'&&e.start===a).reduce((s,e)=>s+e.amount*(1+p.inflation/100)**(a-p.age),0);
+export function workCashFlow(p,a,contribution=p.contribution) {
+  const event=(p.lifeEvents||[]).find(e=>e.type==='work'&&a>=e.start&&a<e.end);
+  return {invest:contribution*12*(1+p.stepUp/100)**(a-p.age)*(event?event.percent/100:1),draw:event?event.draw*12*(1+p.inflation/100)**(a-p.age):0};
+}
+export function previewLifeEvent(p,event) {
+  const next=structuredClone(p);next.lifeEvents=[...(next.lifeEvents||[]),structuredClone(event)];
+  validate(next);
+  return {plan:next,before:calculate(structuredClone(p)),after:calculate(next)};
+}
+export function planChanges(before,after) {
+  const labels={age:'Current age',retire:'Target retirement age',horizon:'Planning horizon',assets:'Investments',income:'Monthly income',expenses:'Monthly spending',contribution:'Monthly investing',inflation:'Inflation',preReturn:'Return before retirement',postReturn:'Return after retirement',stepUp:'Contribution increase',pension:'Pension',pensionAge:'Pension start age',withdrawalTax:'Withdrawal tax',volatility:'Volatility',leanExpenses:'Lean spending',fatExpenses:'Fat spending',baristaIncome:'Part-time income',baristaUntil:'Part-time end age',name:'Plan name'};
+  const changes=[];
+  for(const [key,label]of Object.entries(labels)) if(before[key]!==after[key])changes.push({key,label,before:before[key],after:after[key]});
+  for(const [key,label]of [['goals','Goals'],['incomes','Income streams'],['holdings','Holdings'],['lifeEvents','Life events'],['spendingChanges','Spending changes']])if(JSON.stringify(before[key]||[])!==JSON.stringify(after[key]||[]))changes.push({key,label,before:(before[key]||[]).length,after:(after[key]||[]).length,collection:true});
+  return changes;
 }
 // Yearly retirement spending at age a, in future money. Pension, income streams and (in a
 // Barista FIRE scenario) part-time work reduce it; fixed streams do not rise with inflation.
@@ -43,7 +90,12 @@ function spendingAt(p,a) {
   const factor=(1+p.inflation/100)**(a-p.age);
   let linked=(a>=p.pensionAge?p.pension:0)+(p.baristaActive&&a<p.baristaUntil?p.baristaIncome:0),fixed=0;
   for(const s of p.incomes) if(a>=s.start&&a<s.end) {if(s.inflate) linked+=s.monthly;else fixed+=s.monthly;}
-  return Math.max(0,(p.expenses-linked)*12*factor-fixed*12);
+  let scale=1,extra=0;
+  for(const c of p.spendingChanges||[]) if(changeActive(c,a)) {
+    if(c.kind==='percent') scale*=1+c.percent/100;
+    else extra+=c.monthly*12*(1+(c.inflation??p.inflation)/100)**(a-p.age);
+  }
+  return Math.max(0,p.expenses*scale*12*factor+extra-linked*12*factor-fixed*12);
 }
 // Each goal grows at its own inflation rate (the plan rate unless set). Inflows count negative.
 export const goalCost=(p,g,a=g.age)=>g.amount*(1+(g.inflation??p.inflation)/100)**(a-p.age);
@@ -52,7 +104,7 @@ const separate=g=>g.kind!=='in'&&g.fund?.separate===true;
 // Tax on withdrawals is the share of each withdrawal lost to tax, so covering a cost needs cost/(1−tax).
 // It applies to everything the portfolio pays out; money coming in is entered after tax.
 const grossUp=p=>1/(1-p.withdrawalTax/100);
-const goalsAt=(p,a)=>p.goals.reduce((s,g)=>g.age===a&&!separate(g)?s+(g.kind==='in'?-goalCost(p,g):goalCost(p,g)*grossUp(p)):s,0);
+const goalsAt=(p,a)=>lifePurchaseAt(p,a)*grossUp(p)+p.goals.reduce((s,g)=>g.age===a&&!separate(g)?s+(g.kind==='in'?-goalCost(p,g):goalCost(p,g)*grossUp(p)):s,0);
 const drawAt=(p,a)=>spendingAt(p,a)*grossUp(p);
 // Stand-alone funding plan for one goal: earmarked savings compound at the goal's return, and
 // monthly amounts are invested at the start of each month (annuity-due at the equivalent monthly rate).
@@ -80,8 +132,10 @@ export function requiredCorpus(p, retirement=p.retire) {
 }
 // What moved the balance during year a (future money): investing or spending, each goal, and withdrawal tax.
 export function yearFlows(p,a,retirement=p.retire) {
-  const invest=a<retirement?p.contribution*12*(1+p.stepUp/100)**(a-p.age):0,spend=a<retirement?0:spendingAt(p,a);
+  const work=workCashFlow(p,a);
+  const invest=a<retirement?work.invest:0,spend=a<retirement?work.draw:spendingAt(p,a);
   const items=p.goals.filter(g=>g.age===a&&!separate(g)).map(g=>({name:g.name,kind:g.kind==='in'?'in':'out',amount:goalCost(p,g)}));
+  for(const e of p.lifeEvents||[]) if(e.type==='purchase'&&e.start===a) items.push({name:e.name,kind:'out',amount:lifePurchaseAt({...p,lifeEvents:[e]},a)});
   const outs=spend+items.reduce((s,x)=>s+(x.kind==='out'?x.amount:0),0);
   return {invest,spend,items,tax:outs*(grossUp(p)-1)};
 }
@@ -91,7 +145,7 @@ export function simulate(p, retirement=p.retire, contribution=p.contribution, st
   const points=[{age:p.age,balance}];
   for(let a=p.age;a<p.horizon;a++) {
     const goals=goalsAt(p,a);
-    if(a<retirement) balance+=(a<stopAt?contribution*12:0)*(1+p.stepUp/100)**(a-p.age)-goals;
+    if(a<retirement) {const work=workCashFlow(p,a,contribution);balance+=(a<stopAt?work.invest:0)-work.draw*grossUp(p)-goals;}
     else balance-=drawAt(p,a)+goals;
     if(balance < -0.01 && firstShortfall===null) firstShortfall=a;
     balance=Math.max(0,balance)*(1+(rates?rates[a-p.age]:a<retirement?p.preReturn:p.postReturn)/100);
@@ -111,7 +165,7 @@ export function calculate(p) {
     while(simulate(p,p.retire,hi).firstShortfall!==null&&hi<1e10) hi*=2;
     for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(simulate(p,p.retire,mid).firstShortfall===null) hi=mid;else lo=mid;}
   }
-  return {target,todayTarget,projection,forecast,requiredMonthly:p.retire===p.age?null:hi,progress:todayTarget>0?p.assets/todayTarget*100:100,gap:Math.max(0,target-projection.retirementAssets),surplus:p.income-p.expenses,savingsRate:p.income>0?(p.income-p.expenses)/p.income*100:null};
+  return {target,todayTarget,projection,forecast,requiredMonthly:p.retire===p.age||simulate(p,p.retire,hi).firstShortfall!==null?null:hi,progress:todayTarget>0?p.assets/todayTarget*100:100,gap:Math.max(0,target-projection.retirementAssets),surplus:p.income-p.expenses,savingsRate:p.income>0?(p.income-p.expenses)/p.income*100:null};
 }
 function scenario(p,changes){
   const r=calculate({...p,...changes});
@@ -157,7 +211,7 @@ export function stressTest(p,{paths=1000,seed=1,confidence=0.9}={}) {
   return {paths,successRate:(paths-fails.length)/paths,bands,failAges:fails,medianFailAge:fails.length?pct(fails,.5):null,earliestFail10:fails.length>=paths*.1?pct(runs.map(r=>r.firstShortfall??Infinity).sort((a,b)=>a-b),.1):null,safeExpenses:lo,confidence,
     sequence:{base:{shortfall:base.firstShortfall,final:base.final},early:{age:p.retire,shortfall:early.firstShortfall,final:early.final},late:{age:Math.min(p.horizon-1,p.retire+15),shortfall:late.firstShortfall,final:late.final}}};
 }
-export function convertPlan(p,rate){if(!Number.isFinite(rate)||rate<=0)throw Error('Invalid exchange rate.');const next=structuredClone(p);for(const k of ['expenses','leanExpenses','fatExpenses','baristaIncome','income','assets','contribution','pension'])if(next[k]!==undefined)next[k]*=rate;next.goals=next.goals.map(g=>({...g,amount:g.amount*rate,...(g.fund?{fund:{...g.fund,saved:g.fund.saved*rate,monthly:g.fund.monthly*rate}}:{})}));next.incomes=(next.incomes||[]).map(s=>({...s,monthly:s.monthly*rate}));next.holdings=(next.holdings||[]).map(h=>({...h,amount:h.amount*rate}));return next;}
+export function convertPlan(p,rate){if(!Number.isFinite(rate)||rate<=0)throw Error('Invalid exchange rate.');const next=structuredClone(p);for(const k of ['expenses','leanExpenses','fatExpenses','baristaIncome','income','assets','contribution','pension'])if(next[k]!==undefined)next[k]*=rate;next.goals=next.goals.map(g=>({...g,amount:g.amount*rate,...(g.fund?{fund:{...g.fund,saved:g.fund.saved*rate,monthly:g.fund.monthly*rate}}:{})}));next.incomes=(next.incomes||[]).map(s=>({...s,monthly:s.monthly*rate}));next.holdings=(next.holdings||[]).map(h=>({...h,amount:h.amount*rate}));next.spendingChanges=(next.spendingChanges||[]).map(c=>c.kind==='amount'?{...c,monthly:c.monthly*rate}:{...c});next.lifeEvents=(next.lifeEvents||[]).map(e=>e.type==='purchase'?{...e,amount:e.amount*rate}:{...e,draw:e.draw*rate});return next;}
 export function countdown(target,now=new Date()){
   const end=new Date(target+'T00:00:00');if(!Number.isFinite(end.getTime()))return null;
   if(end<=now)return {years:0,months:0,days:0,past:true};
