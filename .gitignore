@@ -11,3 +11,4 @@ xcuserdata/
 
 # The iOS app is its own private repository (ajaykhannaus/fire-planner-ios), checked out here.
 ios/
+builds/
