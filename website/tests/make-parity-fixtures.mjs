@@ -2,7 +2,7 @@
 // The iOS parity test runs the Swift engine on the same plans and must match.
 // Run from website/: node tests/make-parity-fixtures.mjs
 import {writeFileSync, mkdirSync} from 'node:fs';
-import {demo, validate, calculate, lean, fat, barista, coast, goalPlan, blendedReturn, yearFlows, stressTest, requiredCorpus, convertPlan, previewLifeEvent, planChanges} from '../dist/engine.js';
+import {demo, validate, calculate, lean, fat, barista, coast, goalPlan, blendedReturn, yearFlows, stressTest, requiredCorpus, convertPlan, previewLifeEvent, planChanges, readiness, legacyAt} from '../dist/engine.js';
 
 const base = {name:'Fixture',age:32,retire:50,horizon:95,expenses:75000,income:180000,assets:4500000,contribution:70000,inflation:5,preReturn:8,postReturn:6,stepUp:3,pension:0,pensionAge:60,goals:[]};
 const plans = {
@@ -20,6 +20,8 @@ const plans = {
   lifeWork: {...structuredClone(base), name:'Career break', withdrawalTax:10,
     lifeEvents:[{type:'work',name:'Sabbatical',start:38,end:40,percent:0,draw:40000},{type:'work',name:'Part-time',start:44,end:50,percent:50,draw:0},{type:'purchase',name:'Travel',start:39,amount:600000}]},
   allPaused: {...structuredClone(base), name:'Paused', assets:0, lifeEvents:[{type:'work',name:'Pause',start:32,end:50,percent:0,draw:0}]},
+  legacyAndAnswers: {...structuredClone(base), name:'Legacy', legacy:20000000, goals:[{name:'Car',amount:1500000,age:47}],
+    readiness:{emergencyMonths:9,highInterestDebt:false,bridgeCovered:true,healthCover:false}},
   lifeStages: {...structuredClone(base), name:'Life stages', pension:10000, withdrawalTax:10,
     spendingChanges:[{name:'Home loan EMI',kind:'amount',monthly:30000,start:32,end:57,inflation:0},{name:'Children leave home',kind:'amount',monthly:-15000,start:58},
       {name:'Healthcare',kind:'amount',monthly:8000,start:60,inflation:12},{name:'Slower years',kind:'percent',percent:-20,start:75,end:85},{name:'Care',kind:'percent',percent:15,start:85}]},
@@ -39,7 +41,8 @@ const cases = Object.entries(plans).map(([key, input]) => {
     coast:c && {todayNumber:c.todayNumber, reached:c.reached, progress:c.progress, age:c.age, balance:c.balance},
     goalPlans:p.goals.map(g => { const x = goalPlan(p, g); return {target:x.target, fvSaved:x.fvSaved, gap:x.gap, projected:x.projected,
       monthlyNeeded:x.monthlyNeeded, shortfall:x.shortfall, routes:x.routes.map(r => ({lump:r.lump, monthly:r.monthly}))}; }),
-    blendedReturn:blendedReturn(p),
+    blendedReturn:blendedReturn(p), legacyAt:legacyAt(p),
+    readiness:readiness(p).map(i=>({id:i.id,status:i.status,value:i.value})),
     yearFlows:[p.age, p.retire, Math.min(p.horizon-1, p.retire+10)].map(a => { const f = yearFlows(p, a); return {age:a, invest:f.invest, spend:f.spend, tax:f.tax, items:f.items.map(i => i.amount)}; }),
     stress:{successRate:st.successRate, safeExpenses:st.safeExpenses, medianFailAge:st.medianFailAge, earliestFail10:st.earliestFail10,
       p10:st.bands.map(b=>b.p10), p50:st.bands.map(b=>b.p50), p90:st.bands.map(b=>b.p90), sequence:st.sequence}}};
@@ -67,6 +70,8 @@ const invalid = [
   {key:'overlappingWork', input:{...structuredClone(base), lifeEvents:[{type:'work',name:'A',start:35,end:38,percent:0,draw:0},{type:'work',name:'B',start:37,end:40,percent:0,draw:0}]}},
   {key:'adjacentWorkOK', input:{...structuredClone(base), lifeEvents:[{type:'work',name:'A',start:35,end:38,percent:0,draw:0},{type:'work',name:'B',start:38,end:40,percent:0,draw:0}]}},
   {key:'purchaseAfterHorizon', input:{...structuredClone(base), lifeEvents:[{type:'purchase',name:'Late',start:95,amount:1}]}},
+  {key:'badLegacy', input:{...structuredClone(base), legacy:-5}},
+  {key:'badEmergency', input:{...structuredClone(base), readiness:{emergencyMonths:500}}},
   {key:'badSpendingPercent', input:{...structuredClone(base), spendingChanges:[{name:'X',kind:'percent',percent:-95,start:60}]}},
   {key:'badSpendingAges', input:{...structuredClone(base), spendingChanges:[{name:'X',kind:'amount',monthly:1000,start:60,end:60}]}},
   {key:'badSpendingInflation', input:{...structuredClone(base), spendingChanges:[{name:'X',kind:'amount',monthly:1000,start:60,inflation:40}]}},
